@@ -7,16 +7,16 @@ from sklearn.preprocessing import LabelEncoder
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Bidirectional, Flatten, BatchNormalization, Dropout
 from lime.lime_tabular import LimeTabularExplainer
-import subprocess
-import os
-import matplotlib.pyplot as plt
+from rdkit import Chem
+from mordred import Calculator, descriptors
 import tempfile
 from PIL import Image
 import google.generativeai as genai
+import matplotlib.pyplot as plt
 
 
 def ocr(file):
-    gemini_api_key = "AIzaSyCuD4imF8Ptr5rlqd-A5wSBwDJXN_n6y8I"  
+    gemini_api_key = "AIzaSyCuD4imF8Ptr5rlqd-A5wSBwDJXN_n6y8I"
     genai.configure(api_key=gemini_api_key)
     img = Image.open(file)
     prompt = (
@@ -32,10 +32,12 @@ def target_frame(target_id):
     target = search_target.search(target_id)
     return pd.DataFrame.from_dict(target)
 
+
 def chembl_id(chembl_id):
     activity = new_client.activity
     response = activity.filter(target_chembl_id=chembl_id).filter(standard_type="IC50")
     return pd.DataFrame.from_dict(response)
+
 
 def data_preprocessing(pre_data):
     pre_data = pre_data[pre_data["standard_value"].notna()]
@@ -47,33 +49,25 @@ def data_preprocessing(pre_data):
     )
     pre_data = pre_data[pre_data["status"] != "intermediate"]
     smiles_data = pre_data[["molecule_chembl_id", "canonical_smiles"]]
-    smiles_data.to_csv("molecules.smi", index=False)
     return smiles_data, pre_data
 
-def conversion():
-    df = pd.read_csv("molecules.smi")
-    with open("molecules.smi", "w") as f:
-        for _, row in df.iterrows():
-            f.write(f"{row['canonical_smiles']} {row['molecule_chembl_id']}\n")
 
-def run_padel_script_and_get_descriptors():
-    try:
-        subprocess.run([
-            "java", "-Xms1G", "-Xmx1G", "-Djava.awt.headless=true", "-jar",
-            "PaDEL-Descriptor/PaDEL-Descriptor.jar",
-            "-removesalt", "-standardizenitro", "-fingerprints",
-            "-descriptortypes", "PaDEL-Descriptor/PubchemFingerprinter.xml",
-            "-dir", ".", "-file", "descriptors_output.csv"
-        ], check=True)
-        return pd.read_csv("descriptors_output.csv")
-    except Exception as ex:
-        st.error(f"PaDEL failed: {ex}")
-        return None
+def run_python_descriptors(smiles_df):
+    mols = [Chem.MolFromSmiles(smi) for smi in smiles_df["canonical_smiles"]]
+    calc = Calculator(descriptors, ignore_3D=True)
+    df = calc.pandas(mols)
+    df["molecule_chembl_id"] = smiles_df["molecule_chembl_id"].values
+    df = df.dropna(axis=1, how="any")  # drop columns with NaNs
+    return df
 
 
 def build_model(data, descriptors):
-    y = data["status"]
-    x = descriptors.select_dtypes(include=[np.number])
+    descriptors = descriptors.set_index("molecule_chembl_id")
+    data = data.set_index("molecule_chembl_id")
+    joined = data.join(descriptors, on="molecule_chembl_id", how="inner").dropna()
+    y = joined["status"]
+    x = joined.drop(columns=["status", "canonical_smiles", "standard_value"], errors='ignore')
+
     encoder = LabelEncoder()
     y = encoder.fit_transform(y)
 
@@ -99,12 +93,12 @@ def build_model(data, descriptors):
     return model, history.history, x_test, y_test, encoder
 
 
+# Streamlit UI
 st.set_page_config(layout="wide")
 st.title("🧪 Drug Discovery with Explainable AI")
 
 if "stage" not in st.session_state:
     st.session_state.stage = "input"
-
 
 if st.session_state.stage == "input":
     with st.form("target_form"):
@@ -119,7 +113,6 @@ if st.session_state.stage == "input":
             st.session_state.df_targets = df_targets
             st.session_state.stage = "select"
 
-
 if st.session_state.stage == "select":
     df_targets = st.session_state.df_targets
     st.subheader("🎯 Matching Targets")
@@ -129,7 +122,6 @@ if st.session_state.stage == "select":
         st.session_state.selected_id = selected_id
         st.session_state.stage = "processing"
 
-
 if st.session_state.stage == "processing":
     st.info("Running drug discovery pipeline...")
     activity_data = chembl_id(st.session_state.selected_id)
@@ -138,17 +130,15 @@ if st.session_state.stage == "processing":
         st.session_state.stage = "input"
     else:
         smiles_data, labeled_data = data_preprocessing(activity_data)
-        conversion()
-        descriptors = run_padel_script_and_get_descriptors()
+        descriptors = run_python_descriptors(smiles_data)
         if descriptors is not None:
             mdl, history, x_test, y_test, encoder = build_model(labeled_data, descriptors)
             st.session_state.model = mdl
             st.session_state.history = history
             st.session_state.x_test = x_test
             st.session_state.y_test = y_test
-            st.success("✅ Model trained!")
+            st.success("Model trained!")
             st.session_state.stage = "explain"
-
 
 if st.session_state.stage == "explain":
     st.line_chart({
@@ -181,6 +171,6 @@ if st.session_state.stage == "explain":
 
     st.image(st.session_state.lime_img_path, caption=f"LIME Explanation for sample {idx}")
 
-    if st.button("🔍 Explain with Gemini"):
+    if st.button("Explain with Gemini"):
         gemini_result = ocr(st.session_state.lime_img_path)
         st.markdown(f"**Gemini Insight:**\n\n{gemini_result}")
