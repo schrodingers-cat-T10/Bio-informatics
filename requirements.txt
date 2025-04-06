@@ -1,0 +1,8 @@
+streamlit 
+tensorflow
+chembl_webresource_client
+pandas
+numpy
+matplotlib
+lime
+google.generativeai

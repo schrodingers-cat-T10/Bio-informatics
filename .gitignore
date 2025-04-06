@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+*.png
+*.jpg
+*.jpeg
+descriptors_output.csv
+molecules.smi
+PaDEL-Descriptor/results/
+.env
+*.log
