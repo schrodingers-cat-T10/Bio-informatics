@@ -100,7 +100,7 @@ def build_model(data, descriptors):
 
 
 st.set_page_config(layout="wide")
-st.title("🧪 Drug Discovery with Explainable AI")
+st.title(" Drug Discovery with Explainable AI 🧪")
 
 if "stage" not in st.session_state:
     st.session_state.stage = "input"
@@ -122,7 +122,7 @@ if st.session_state.stage == "input":
 
 if st.session_state.stage == "select":
     df_targets = st.session_state.df_targets
-    st.subheader("🎯 Matching Targets")
+    st.subheader(" Matching Targets")
     st.dataframe(df_targets[["pref_name", "organism", "target_chembl_id"]])
     selected_id = st.selectbox("Select a ChEMBL Target ID", df_targets["target_chembl_id"])
     if st.button("Run Pipeline"):
